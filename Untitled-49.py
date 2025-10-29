@@ -697,10 +697,23 @@ model.LogicalRelationDomestic = Constraint(model.p, model.c, model.sc, model.tp,
 # -----------------------------------------------------------------------------
 # Solve the model
 # -----------------------------------------------------------------------------
-model.dual = Suffix(direction=Suffix.IMPORT, optional=True)
-model.slack = Suffix(direction=Suffix.IMPORT, optional=True)
-model.rc = Suffix(direction=Suffix.IMPORT, optional=True)
-model.iis = Suffix(direction=Suffix.IMPORT, optional=True)
+
+
+def _attach_suffix(model, name, direction):
+    """Attach a solver suffix, tolerating Pyomo versions without 'optional'."""
+
+    suffix_kwargs = {"direction": direction}
+    try:
+        suffix = Suffix(optional=True, **suffix_kwargs)
+    except (TypeError, ValueError):
+        suffix = Suffix(**suffix_kwargs)
+    setattr(model, name, suffix)
+
+
+_attach_suffix(model, "dual", Suffix.IMPORT)
+_attach_suffix(model, "slack", Suffix.IMPORT)
+_attach_suffix(model, "rc", Suffix.IMPORT)
+_attach_suffix(model, "iis", Suffix.IMPORT)
 
 
 def report_infeasibilities(model, logger, tol=1e-6):
