@@ -839,12 +839,24 @@ if solver_name == 'cplex':
 elif solver_name == 'cplex_direct':
     solve_kwargs['suffixes'] = ['dual', 'slack', 'rc', 'iis']
 
+retry_kwargs = dict(tee=True)
+if solver_name == 'cplex':
+    retry_kwargs['logfile'] = 'cplex.log'
+
 try:
     result = solver.solve(model, **solve_kwargs)
 except TypeError:
     solve_kwargs.pop('suffixes', None)
     solve_kwargs.pop('logfile', None)
+    solve_kwargs = retry_kwargs
     result = solver.solve(model, **solve_kwargs)
+except RuntimeError as exc:
+    if 'suffix=iis' in str(exc):
+        print('Solver was unable to provide IIS suffix information; retrying without IIS request.')
+        solve_kwargs = retry_kwargs
+        result = solver.solve(model, **solve_kwargs)
+    else:
+        raise
 
 termination = result.solver.termination_condition
 
