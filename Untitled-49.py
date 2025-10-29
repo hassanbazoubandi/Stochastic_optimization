@@ -697,10 +697,10 @@ model.LogicalRelationDomestic = Constraint(model.p, model.c, model.sc, model.tp,
 # -----------------------------------------------------------------------------
 # Solve the model
 # -----------------------------------------------------------------------------
-model.dual = Suffix(direction=Suffix.IMPORT)
-model.slack = Suffix(direction=Suffix.IMPORT)
-model.rc = Suffix(direction=Suffix.IMPORT)
-model.iis = Suffix(direction=Suffix.IMPORT)
+model.dual = Suffix(direction=Suffix.IMPORT, optional=True)
+model.slack = Suffix(direction=Suffix.IMPORT, optional=True)
+model.rc = Suffix(direction=Suffix.IMPORT, optional=True)
+model.iis = Suffix(direction=Suffix.IMPORT, optional=True)
 
 
 def report_infeasibilities(model, logger, tol=1e-6):
