@@ -566,8 +566,6 @@ def sulfur_content_rule(model, p, r, tp, sc):
         for m in model.m
     )
     total_output = sum(model.qpte[p, r, te, sc, tp] for te in model.te) + sum(model.qpb[p, r, b, sc, tp] for b in model.b)
-    if total_output == 0:
-        return processed_sulfur <= 0
     return processed_sulfur <= model.SC_p[p, tp] * total_output
 
 
