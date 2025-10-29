@@ -1,143 +1,316 @@
-from pyomo.environ import (Binary, ConcreteModel, Constraint, NonNegativeReals,
-                           Objective, Param, Set, SolverFactory, Var, maximize)
+from pyomo.environ import (
+    Binary,
+    ConcreteModel,
+    Constraint,
+    NonNegativeReals,
+    Objective,
+    Param,
+    Set,
+    SolverFactory,
+    Var,
+    maximize,
+)
 from pyomo.opt import TerminationCondition
+
+
+model = ConcreteModel(name="Stochastic multi-echelon supply chain")
 
 # -----------------------------------------------------------------------------
 # Sets
 # -----------------------------------------------------------------------------
-model = ConcreteModel(name="Stochastic multi-echelon supply chain")
-
 model.m = Set(initialize=['m1'], ordered=True, doc='Materials')
 model.p = Set(initialize=['p1'], ordered=True, doc='Products')
 model.tp = Set(initialize=['tp1'], ordered=True, doc='Time periods')
-model.tr = Set(initialize=['tr1'], ordered=True, doc='Transportation tools')
-model.sc = Set(initialize=['SC1'], ordered=True, doc='Scenarios')
+model.tr = Set(initialize=['tr1', 'tr2', 'tr3', 'tr4'], ordered=True, doc='Transportation tools')
+model.sc = Set(
+    initialize=[
+        'SC1', 'SC2', 'SC3', 'SC4', 'SC5', 'SC6', 'SC7', 'SC8', 'SC9',
+        'SC_oc1', 'SC_oc2', 'SC_of', 'SC_te', 'SC_r1', 'SC_r2', 'SC_r3',
+        'SC_b1', 'SC_b2', 'SC_b3', 'SC_c1', 'SC_c2', 'SC_c3', 'SC_c4', 'SC_c5',
+    ],
+    ordered=True,
+    doc='Scenarios',
+)
 model.b = Set(initialize=['b1'], ordered=True, doc='Distribution bases')
 model.c = Set(initialize=['c1'], ordered=True, doc='Domestic customers')
 model.oc = Set(initialize=['oc1'], ordered=True, doc='Overseas customers')
 model.of = Set(initialize=['of1'], ordered=True, doc='Oil fields')
-model.r = Set(initialize=['r1'], ordered=True, doc='Refineries')
+model.r = Set(initialize=['r1', 'r2', 'r3'], ordered=True, doc='Refineries')
 model.te = Set(initialize=['te1'], ordered=True, doc='Terminals')
 
-# Nodes that appear in transportation relations (o_: origin, i_: destination)
-model.n = Set(initialize=['o_of', 'o_te', 'o_r1', 'o_b1', 'o_c1', 'o_oc1'], ordered=True)
-model.np = Set(initialize=['i_of', 'i_te', 'i_r1', 'i_b1', 'i_c1', 'i_oc1'], ordered=True)
-
-# Mapping utilities for translating facility identifiers to network nodes
-origin_node = {
-    'of1': 'o_of',
-    'te1': 'o_te',
-    'r1': 'o_r1',
-    'b1': 'o_b1',
-    'c1': 'o_c1',
-    'oc1': 'o_oc1',
-}
-destination_node = {
-    'of1': 'i_of',
-    'te1': 'i_te',
-    'r1': 'i_r1',
-    'b1': 'i_b1',
-    'c1': 'i_c1',
-    'oc1': 'i_oc1',
+node_pairs = {
+    'of1': ('o_of', 'i_of'),
+    'te1': ('o_te', 'i_te'),
+    'r1': ('o_r1', 'i_r1'),
+    'r2': ('o_r2', 'i_r2'),
+    'r3': ('o_r3', 'i_r3'),
+    'b1': ('o_b1', 'i_b1'),
+    'c1': ('o_c1', 'i_c1'),
+    'oc1': ('o_oc1', 'i_oc1'),
 }
 
+model.n = Set(initialize=sorted({v[0] for v in node_pairs.values()}), ordered=True)
+model.np = Set(initialize=sorted({v[1] for v in node_pairs.values()}), ordered=True)
+
+origin_node = {name: nodes[0] for name, nodes in node_pairs.items()}
+destination_node = {name: nodes[1] for name, nodes in node_pairs.items()}
+
 # -----------------------------------------------------------------------------
-# Parameters (data are taken from the shared Word/PDF resources)
+# Parameters (sourced from article tables)
 # -----------------------------------------------------------------------------
-model.BigM = Param(initialize=1e6, doc='Large constant')
+model.BigM = Param(initialize=1e11, doc='Large constant')
 model.TAXC = Param(initialize=10, doc='Carbon tax per ton of CO2')
 
 model.BCK = Param(model.p, model.tp, initialize={('p1', 'tp1'): 50}, doc='Backlog penalty')
-model.CAPL = Param(model.r, model.m, model.tp, initialize={('r1', 'm1', 'tp1'): 100}, doc='Lower refinery capacity')
-model.CAPU = Param(model.r, model.m, model.tp, initialize={('r1', 'm1', 'tp1'): 400}, doc='Upper refinery capacity')
+model.CAPL = Param(
+    model.r,
+    model.m,
+    model.tp,
+    initialize={
+        ('r1', 'm1', 'tp1'): 100,
+        ('r2', 'm1', 'tp1'): 0,
+        ('r3', 'm1', 'tp1'): 0,
+    },
+    default=0,
+    doc='Lower refinery capacity',
+)
+model.CAPU = Param(
+    model.r,
+    model.m,
+    model.tp,
+    initialize={
+        ('r1', 'm1', 'tp1'): 400,
+        ('r2', 'm1', 'tp1'): 0,
+        ('r3', 'm1', 'tp1'): 0,
+    },
+    default=0,
+    doc='Upper refinery capacity',
+)
 
-model.DEM = Param(model.p, model.c, model.sc, model.tp,
-                  initialize={('p1', 'c1', 'SC1', 'tp1'): 24},
-                  default=0, doc='Domestic customer demand')
-model.DEM_oc = Param(model.p, model.oc, model.sc, model.tp,
-                     initialize={('p1', 'oc1', 'SC1', 'tp1'): 24},
-                     default=0, doc='Overseas customer demand')
+model.DEM = Param(
+    model.p,
+    model.c,
+    model.sc,
+    model.tp,
+    initialize={
+        ('p1', 'c1', 'SC1', 'tp1'): 24,
+        ('p1', 'c1', 'SC2', 'tp1'): 30,
+        ('p1', 'c1', 'SC3', 'tp1'): 36,
+        ('p1', 'c1', 'SC4', 'tp1'): 24,
+        ('p1', 'c1', 'SC5', 'tp1'): 30,
+        ('p1', 'c1', 'SC6', 'tp1'): 36,
+        ('p1', 'c1', 'SC7', 'tp1'): 24,
+        ('p1', 'c1', 'SC8', 'tp1'): 30,
+        ('p1', 'c1', 'SC9', 'tp1'): 36,
+    },
+    default=0,
+    doc='Domestic demand',
+)
+model.DEM_oc = Param(
+    model.p,
+    model.oc,
+    model.sc,
+    model.tp,
+    initialize={
+        ('p1', 'oc1', 'SC1', 'tp1'): 24,
+        ('p1', 'oc1', 'SC2', 'tp1'): 30,
+        ('p1', 'oc1', 'SC3', 'tp1'): 36,
+        ('p1', 'oc1', 'SC4', 'tp1'): 24,
+        ('p1', 'oc1', 'SC5', 'tp1'): 30,
+        ('p1', 'oc1', 'SC6', 'tp1'): 36,
+        ('p1', 'oc1', 'SC7', 'tp1'): 24,
+        ('p1', 'oc1', 'SC8', 'tp1'): 30,
+        ('p1', 'oc1', 'SC9', 'tp1'): 36,
+    },
+    default=0,
+    doc='Overseas demand',
+)
 
-model.DIS = Param(model.n, model.np, initialize={
-    ('o_of', 'i_r1'): 10,
-    ('o_te', 'i_r1'): 0,
-    ('o_r1', 'i_te'): 10,
-    ('o_r1', 'i_b1'): 10,
-    ('o_te', 'i_oc1'): 10,
-    ('o_b1', 'i_c1'): 10,
-}, default=0, doc='Distances between nodes (km)')
+model.DIS = Param(
+    model.n,
+    model.np,
+    initialize={
+        ('o_of', 'i_r1'): 10,
+        ('o_te', 'i_oc1'): 10,
+        ('o_te', 'i_b1'): 10,
+        ('o_r1', 'i_te'): 10,
+        ('o_r1', 'i_b1'): 10,
+        ('o_b1', 'i_c1'): 10,
+    },
+    default=0,
+    doc='Distances (km)',
+)
 
-model.DSR = Param(model.r, model.m, initialize={('r1', 'm1'): 0.5}, doc='Desulfurisation ratio')
+model.DSR = Param(model.r, model.m, initialize={('r1', 'm1'): 0.5}, default=0, doc='Desulfurisation ratio')
 model.EPPU = Param(model.p, model.tp, initialize={('p1', 'tp1'): 300}, doc='Extra product purchase limit')
-model.EPUP = Param(model.p, model.te, model.tp,
-                   initialize={('p1', 'te1', 'tp1'): 50}, doc='Extra product unit price')
+model.EPUP = Param(model.p, model.te, model.tp, initialize={('p1', 'te1', 'tp1'): 50}, doc='Extra product price')
 
-model.IVU = Param(model.m, model.r, model.tp,
-                  initialize={('m1', 'r1', 'tp1'): 100}, doc='Material inventory capacity at refinery')
-model.IVU_b = Param(model.p, model.b, model.tp,
-                    initialize={('p1', 'b1', 'tp1'): 100}, doc='Product inventory capacity at base')
-model.IVU_te = Param(model.p, model.te, model.tp,
-                     initialize={('p1', 'te1', 'tp1'): 100}, doc='Product inventory capacity at terminal')
+model.IVU = Param(model.m, model.r, model.tp, initialize={('m1', 'r1', 'tp1'): 100}, default=0, doc='Material inventory cap')
+model.IVU_b = Param(model.p, model.b, model.tp, initialize={('p1', 'b1', 'tp1'): 100}, default=0, doc='Base inventory cap')
+model.IVU_te = Param(model.p, model.te, model.tp, initialize={('p1', 'te1', 'tp1'): 100}, default=0, doc='Terminal inventory cap')
 
-model.IVUP = Param(model.m, model.r, model.tp,
-                   initialize={('m1', 'r1', 'tp1'): 100}, doc='Inventory holding cost at refinery')
-model.IVUP_b = Param(model.p, model.b, model.tp,
-                     initialize={('p1', 'b1', 'tp1'): 100}, doc='Inventory holding cost at base')
-model.IVUP_te = Param(model.p, model.te, model.tp,
-                      initialize={('p1', 'te1', 'tp1'): 100}, doc='Inventory holding cost at terminal')
+model.IVUP = Param(model.m, model.r, model.tp, initialize={('m1', 'r1', 'tp1'): 100}, default=0, doc='Material holding cost')
+model.IVUP_b = Param(model.p, model.b, model.tp, initialize={('p1', 'b1', 'tp1'): 100}, default=0, doc='Base holding cost')
+model.IVUP_te = Param(model.p, model.te, model.tp, initialize={('p1', 'te1', 'tp1'): 100}, default=0, doc='Terminal holding cost')
 
 model.MPU = Param(model.m, model.tp, initialize={('m1', 'tp1'): 150}, doc='Material procurement limit')
-model.MUP = Param(model.m, model.te, model.tp,
-                  initialize={('m1', 'te1', 'tp1'): 800}, doc='Material price at terminal')
-model.MUP_of = Param(model.m, model.of, model.tp,
-                     initialize={('m1', 'of1', 'tp1'): 800}, doc='Material price at oil field')
+model.MUP = Param(model.m, model.te, model.tp, initialize={('m1', 'te1', 'tp1'): 800}, doc='Material price at terminal')
+model.MUP_of = Param(model.m, model.of, model.tp, initialize={('m1', 'of1', 'tp1'): 800}, doc='Material price at oil field')
 
-model.MTUP = Param(model.m, model.n, model.np, model.tr, model.tp, initialize={
-    ('m1', 'o_of', 'i_r1', 'tr1', 'tp1'): 85,
-    ('m1', 'o_te', 'i_r1', 'tr1', 'tp1'): 85,
-}, default=0, doc='Transportation price for material (per km-ton)')
+model.MTUP = Param(
+    model.m,
+    model.n,
+    model.np,
+    model.tr,
+    model.tp,
+    initialize={
+        ('m1', 'o_of', 'i_r1', 'tr1', 'tp1'): 85,
+        ('m1', 'o_te', 'i_oc1', 'tr1', 'tp1'): 85,
+        ('m1', 'o_te', 'i_b1', 'tr1', 'tp1'): 85,
+        ('m1', 'o_r1', 'i_te', 'tr1', 'tp1'): 85,
+        ('m1', 'o_r1', 'i_b1', 'tr1', 'tp1'): 85,
+        ('m1', 'o_b1', 'i_c1', 'tr1', 'tp1'): 85,
+    },
+    default=0,
+    doc='Material transport price (per km-ton)',
+)
 
-model.PTUP = Param(model.p, model.n, model.np, model.tr, model.tp, initialize={
-    ('p1', 'o_r1', 'i_te', 'tr1', 'tp1'): 10,
-    ('p1', 'o_r1', 'i_b1', 'tr1', 'tp1'): 10,
-    ('p1', 'o_te', 'i_oc1', 'tr1', 'tp1'): 10,
-    ('p1', 'o_b1', 'i_c1', 'tr1', 'tp1'): 10,
-}, default=0, doc='Transportation price for product (per km-ton)')
+model.PTUP = Param(
+    model.p,
+    model.n,
+    model.np,
+    model.tr,
+    model.tp,
+    initialize={
+        ('p1', 'o_of', 'i_r1', 'tr1', 'tp1'): 10,
+        ('p1', 'o_te', 'i_oc1', 'tr1', 'tp1'): 10,
+        ('p1', 'o_te', 'i_b1', 'tr1', 'tp1'): 10,
+        ('p1', 'o_r1', 'i_te', 'tr1', 'tp1'): 10,
+        ('p1', 'o_r1', 'i_b1', 'tr1', 'tp1'): 10,
+        ('p1', 'o_b1', 'i_c1', 'tr1', 'tp1'): 10,
+    },
+    default=0,
+    doc='Product transport price (per km-ton)',
+)
 
-model.PUP = Param(model.p, model.te, model.sc, model.tp,
-                  initialize={('p1', 'te1', 'SC1', 'tp1'): 936},
-                  default=0, doc='Selling price at terminal')
-model.PUP_b = Param(model.p, model.b, model.sc, model.tp,
-                    initialize={('p1', 'b1', 'SC1', 'tp1'): 936},
-                    default=0, doc='Selling price at base')
+model.PUP = Param(
+    model.p,
+    model.te,
+    model.sc,
+    model.tp,
+    initialize={
+        ('p1', 'te1', 'SC1', 'tp1'): 936,
+        ('p1', 'te1', 'SC2', 'tp1'): 936,
+        ('p1', 'te1', 'SC3', 'tp1'): 936,
+        ('p1', 'te1', 'SC4', 'tp1'): 1170,
+        ('p1', 'te1', 'SC5', 'tp1'): 1170,
+        ('p1', 'te1', 'SC6', 'tp1'): 1170,
+        ('p1', 'te1', 'SC7', 'tp1'): 1404,
+        ('p1', 'te1', 'SC8', 'tp1'): 1404,
+        ('p1', 'te1', 'SC9', 'tp1'): 1404,
+    },
+    default=0,
+    doc='Selling price at terminal',
+)
+model.PUP_b = Param(
+    model.p,
+    model.b,
+    model.sc,
+    model.tp,
+    initialize={
+        ('p1', 'b1', 'SC1', 'tp1'): 936,
+        ('p1', 'b1', 'SC2', 'tp1'): 936,
+        ('p1', 'b1', 'SC3', 'tp1'): 936,
+        ('p1', 'b1', 'SC4', 'tp1'): 1170,
+        ('p1', 'b1', 'SC5', 'tp1'): 1170,
+        ('p1', 'b1', 'SC6', 'tp1'): 1170,
+        ('p1', 'b1', 'SC7', 'tp1'): 1404,
+        ('p1', 'b1', 'SC8', 'tp1'): 1404,
+        ('p1', 'b1', 'SC9', 'tp1'): 1404,
+    },
+    default=0,
+    doc='Selling price at base',
+)
 
-model.QBU = Param(model.p, model.c, model.tp, initialize={('p1', 'c1', 'tp1'): 500}, doc='Backlog limit domestic')
-model.QBU_oc = Param(model.p, model.oc, model.tp, initialize={('p1', 'oc1', 'tp1'): 500}, doc='Backlog limit overseas')
-model.QSU = Param(model.p, model.c, model.tp, initialize={('p1', 'c1', 'tp1'): 500}, doc='Surplus limit domestic')
-model.QSU_oc = Param(model.p, model.oc, model.tp, initialize={('p1', 'oc1', 'tp1'): 500}, doc='Surplus limit overseas')
+model.QBU = Param(model.p, model.c, model.tp, initialize={('p1', 'c1', 'tp1'): 500}, doc='Domestic backlog limit')
+model.QBU_oc = Param(model.p, model.oc, model.tp, initialize={('p1', 'oc1', 'tp1'): 500}, doc='Overseas backlog limit')
+model.QSU = Param(model.p, model.c, model.tp, initialize={('p1', 'c1', 'tp1'): 500}, doc='Domestic surplus limit')
+model.QSU_oc = Param(model.p, model.oc, model.tp, initialize={('p1', 'oc1', 'tp1'): 500}, doc='Overseas surplus limit')
 
-model.ROUP = Param(model.r, model.m, model.tp,
-                   initialize={('r1', 'm1', 'tp1'): 50}, doc='Refinery operation cost')
-model.SC_m = Param(model.m, model.tp, initialize={('m1', 'tp1'): 50}, doc='Sulfur content material (ppm)')
-model.SC_p = Param(model.p, model.tp, initialize={('p1', 'tp1'): 50}, doc='Sulfur content product (ppm)')
+model.ROUP = Param(
+    model.r,
+    model.m,
+    model.tp,
+    initialize={
+        ('r1', 'm1', 'tp1'): 50,
+        ('r2', 'm1', 'tp1'): 0,
+        ('r3', 'm1', 'tp1'): 0,
+    },
+    default=0,
+    doc='Refinery operation cost',
+)
+model.SC_m = Param(model.m, model.tp, initialize={('m1', 'tp1'): 50}, doc='Sulfur content material')
+model.SC_p = Param(model.p, model.tp, initialize={('p1', 'tp1'): 50}, doc='Sulfur content product')
 model.SUR = Param(model.p, model.tp, initialize={('p1', 'tp1'): 30}, doc='Surplus penalty')
 
-model.TCAU = Param(model.n, model.np, model.tr, model.tp, initialize={
-    ('o_of', 'i_r1', 'tr1', 'tp1'): 1000,
-    ('o_te', 'i_r1', 'tr1', 'tp1'): 1000,
-    ('o_r1', 'i_te', 'tr1', 'tp1'): 1000,
-    ('o_r1', 'i_b1', 'tr1', 'tp1'): 1000,
-    ('o_te', 'i_oc1', 'tr1', 'tp1'): 1000,
-    ('o_b1', 'i_c1', 'tr1', 'tp1'): 1000,
-}, default=0, doc='Transportation capacity upper bound')
+model.TCAU = Param(
+    model.n,
+    model.np,
+    model.tr,
+    model.tp,
+    initialize={
+        ('o_of', 'i_r1', 'tr1', 'tp1'): 1000,
+        ('o_te', 'i_oc1', 'tr1', 'tp1'): 1000,
+        ('o_te', 'i_b1', 'tr1', 'tp1'): 1000,
+        ('o_r1', 'i_te', 'tr1', 'tp1'): 1000,
+        ('o_r1', 'i_b1', 'tr1', 'tp1'): 1000,
+        ('o_b1', 'i_c1', 'tr1', 'tp1'): 1000,
+    },
+    default=0,
+    doc='Transport capacity upper bound',
+)
 
-model.YDR = Param(model.r, model.m, model.p, initialize={('r1', 'm1', 'p1'): 1}, doc='Yield ratio')
-model.YDR_tp = Param(model.r, model.m, model.tp, initialize={('r1', 'm1', 'tp1'): 1}, doc='Yield ratio by time')
+model.YDR = Param(model.r, model.m, model.p, initialize={('r1', 'm1', 'p1'): 1}, default=0, doc='Yield ratio')
+model.YDR_tp = Param(model.r, model.m, model.tp, initialize={('r1', 'm1', 'tp1'): 1}, default=0, doc='Yield ratio (time specific)')
 
-model.CCOEF = Param(model.tr, initialize={'tr1': 5304}, doc='Transport emission factor')
-model.EC = Param(model.r, initialize={'r1': 79}, doc='Refinery emission factor')
+model.CCOEF = Param(
+    model.tr,
+    initialize={'tr1': 5304, 'tr2': 5330, 'tr3': 5928, 'tr4': 5980},
+    doc='Transport emission factor',
+)
+model.EC = Param(model.r, initialize={'r1': 79, 'r2': 492, 'r3': 329}, doc='Refinery emission factor')
 
-model.PROB = Param(model.sc, initialize={'SC1': 1.0}, doc='Scenario probability')
+model.PROB = Param(
+    model.sc,
+    initialize={
+        'SC_oc1': 0,
+        'SC_oc2': 0,
+        'SC_of': 1,
+        'SC_te': 0,
+        'SC_r1': 0,
+        'SC_r2': 1,
+        'SC_r3': 1,
+        'SC_b1': 0,
+        'SC_b2': 0,
+        'SC_b3': 1,
+        'SC_c1': 1,
+        'SC_c2': 1,
+        'SC_c3': 1,
+        'SC_c4': 1,
+        'SC_c5': 0,
+        'SC1': 1,
+        'SC2': 1,
+        'SC3': 1,
+        'SC4': 1,
+        'SC5': 1,
+        'SC6': 1,
+        'SC7': 1,
+        'SC8': 1,
+        'SC9': 1,
+    },
+    default=0,
+    doc='Scenario probability',
+)
 
 # -----------------------------------------------------------------------------
 # Decision variables
@@ -171,76 +344,87 @@ model.iqbp_oc = Var(model.p, model.oc, model.sc, model.tp, domain=Binary)
 # -----------------------------------------------------------------------------
 
 def objective_rule(model):
-    # Revenue per scenario
     revenue = sum(
-        model.PROB[sc] * (
-            sum(model.PUP[p, te, sc, tp] * model.qps_oc[p, oc, te, sc, tp]
-                for p in model.p for oc in model.oc for te in model.te for tp in model.tp) +
-            sum(model.PUP_b[p, b, sc, tp] * model.qps[p, c, b, sc, tp]
-                for p in model.p for c in model.c for b in model.b for tp in model.tp)
+        model.PROB[sc]
+        * (
+            sum(
+                model.PUP[p, te, sc, tp] * model.qps_oc[p, oc, te, sc, tp]
+                for p in model.p
+                for oc in model.oc
+                for te in model.te
+                for tp in model.tp
+            )
+            + sum(
+                model.PUP_b[p, b, sc, tp] * model.qps[p, c, b, sc, tp]
+                for p in model.p
+                for c in model.c
+                for b in model.b
+                for tp in model.tp
+            )
         )
         for sc in model.sc
     )
 
-    # Scenario dependent operating costs
     scenario_costs = sum(
-        model.PROB[sc] * (
-            # Refinery operating cost
-            sum(model.ROUP[r, m, tp] * model.qmo[r, m, sc, tp]
-                for r in model.r for m in model.m for tp in model.tp) +
-            # Inventory costs
-            sum(model.IVUP[m, r, tp] * model.qmsto[m, r, sc, tp]
-                for m in model.m for r in model.r for tp in model.tp) +
-            sum(model.IVUP_te[p, te, tp] * model.qpsto[p, te, sc, tp]
-                for p in model.p for te in model.te for tp in model.tp) +
-            sum(model.IVUP_b[p, b, tp] * model.qpsto_b[p, b, sc, tp]
-                for p in model.p for b in model.b for tp in model.tp) +
-            # Product transportation costs
-            sum(model.PTUP[p, n, np, tr, tp] * model.DIS[n, np] * model.qptr[p, n, np, tr, sc, tp]
-                for p in model.p for n in model.n for np in model.np for tr in model.tr for tp in model.tp) +
-            # Extra product purchase cost
-            sum(model.EPUP[p, te, tp] * model.qepp[p, te, sc, tp]
-                for p in model.p for te in model.te for tp in model.tp) +
-            # Surplus and backlog penalties
-            sum(model.SUR[p, tp] * model.qsp[p, c, sc, tp]
-                for p in model.p for c in model.c for tp in model.tp) +
-            sum(model.SUR[p, tp] * model.qsp_oc[p, oc, sc, tp]
-                for p in model.p for oc in model.oc for tp in model.tp) +
-            sum(model.BCK[p, tp] * model.qbp[p, c, sc, tp]
-                for p in model.p for c in model.c for tp in model.tp) +
-            sum(model.BCK[p, tp] * model.qbp_oc[p, oc, sc, tp]
-                for p in model.p for oc in model.oc for tp in model.tp)
+        model.PROB[sc]
+        * (
+            sum(model.ROUP[r, m, tp] * model.qmo[r, m, sc, tp] for r in model.r for m in model.m for tp in model.tp)
+            + sum(model.IVUP[m, r, tp] * model.qmsto[m, r, sc, tp] for m in model.m for r in model.r for tp in model.tp)
+            + sum(model.IVUP_te[p, te, tp] * model.qpsto[p, te, sc, tp] for p in model.p for te in model.te for tp in model.tp)
+            + sum(model.IVUP_b[p, b, tp] * model.qpsto_b[p, b, sc, tp] for p in model.p for b in model.b for tp in model.tp)
+            + sum(
+                model.PTUP[p, n, np, tr, tp] * model.DIS[n, np] * model.qptr[p, n, np, tr, sc, tp]
+                for p in model.p
+                for n in model.n
+                for np in model.np
+                for tr in model.tr
+                for tp in model.tp
+            )
+            + sum(model.EPUP[p, te, tp] * model.qepp[p, te, sc, tp] for p in model.p for te in model.te for tp in model.tp)
+            + sum(model.SUR[p, tp] * model.qsp[p, c, sc, tp] for p in model.p for c in model.c for tp in model.tp)
+            + sum(model.SUR[p, tp] * model.qsp_oc[p, oc, sc, tp] for p in model.p for oc in model.oc for tp in model.tp)
+            + sum(model.BCK[p, tp] * model.qbp[p, c, sc, tp] for p in model.p for c in model.c for tp in model.tp)
+            + sum(model.BCK[p, tp] * model.qbp_oc[p, oc, sc, tp] for p in model.p for oc in model.oc for tp in model.tp)
         )
         for sc in model.sc
     )
 
-    # Material purchase costs (scenario independent)
     material_purchase = (
-        sum(model.MUP[m, te, tp] * model.qmp[m, te, r, tp]
-            for m in model.m for te in model.te for r in model.r for tp in model.tp) +
-        sum(model.MUP_of[m, of_, tp] * model.qmp_of[m, of_, r, tp]
-            for m in model.m for of_ in model.of for r in model.r for tp in model.tp)
+        sum(model.MUP[m, te, tp] * model.qmp[m, te, r, tp] for m in model.m for te in model.te for r in model.r for tp in model.tp)
+        + sum(model.MUP_of[m, of_, tp] * model.qmp_of[m, of_, r, tp] for m in model.m for of_ in model.of for r in model.r for tp in model.tp)
     )
 
-    # Material transportation costs
     material_transport = sum(
         model.MTUP[m, n, np, tr, tp] * model.DIS[n, np] * model.qmtr[m, n, np, tr, tp]
-        for m in model.m for n in model.n for np in model.np for tr in model.tr for tp in model.tp
+        for m in model.m
+        for n in model.n
+        for np in model.np
+        for tr in model.tr
+        for tp in model.tp
     )
 
-    # Carbon taxation (material transport, product transport, and refinery processing)
     carbon_tax = (
-        model.TAXC * sum(
+        model.TAXC
+        * sum(
             model.CCOEF[tr] * model.DIS[n, np] * model.qmtr[m, n, np, tr, tp]
-            for m in model.m for n in model.n for np in model.np for tr in model.tr for tp in model.tp
-        ) +
-        sum(
-            model.PROB[sc] * (
-                model.TAXC * sum(model.EC[r] * model.qmo[r, m, sc, tp]
-                                  for r in model.r for m in model.m for tp in model.tp) +
-                model.TAXC * sum(
+            for m in model.m
+            for n in model.n
+            for np in model.np
+            for tr in model.tr
+            for tp in model.tp
+        )
+        + sum(
+            model.PROB[sc]
+            * (
+                model.TAXC * sum(model.EC[r] * model.qmo[r, m, sc, tp] for r in model.r for m in model.m for tp in model.tp)
+                + model.TAXC
+                * sum(
                     model.CCOEF[tr] * model.DIS[n, np] * model.qptr[p, n, np, tr, sc, tp]
-                    for p in model.p for n in model.n for np in model.np for tr in model.tr for tp in model.tp
+                    for p in model.p
+                    for n in model.n
+                    for np in model.np
+                    for tr in model.tr
+                    for tp in model.tp
                 )
             )
             for sc in model.sc
@@ -258,10 +442,9 @@ model.Obj = Objective(rule=objective_rule, sense=maximize)
 # -----------------------------------------------------------------------------
 
 def material_balance_rule(model, m, r, tp, sc):
-    prev_tp = model.tp.prev(tp)
-    inventory_prev = model.qmsto[m, r, sc, prev_tp] if prev_tp is not None else 0
-    inflow = sum(model.qmp[m, te, r, tp] for te in model.te) + \
-        sum(model.qmp_of[m, of_, r, tp] for of_ in model.of) + inventory_prev
+    inflow = sum(model.qmp[m, te, r, tp] for te in model.te) + sum(model.qmp_of[m, of_, r, tp] for of_ in model.of)
+    if model.tp.ord(tp) > 1:
+        inflow += model.qmsto[m, r, sc, model.tp.prev(tp)]
     return inflow == model.qmo[r, m, sc, tp] + model.qmsto[m, r, sc, tp]
 
 
@@ -270,8 +453,8 @@ model.MaterialBalance = Constraint(model.m, model.r, model.tp, model.sc, rule=ma
 
 def transport_capacity_rule(model, n, np, tr, tp):
     return (
-        sum(model.qmtr[m, n, np, tr, tp] for m in model.m) +
-        sum(model.qptr[p, n, np, tr, sc, tp] for p in model.p for sc in model.sc)
+        sum(model.qmtr[m, n, np, tr, tp] for m in model.m)
+        + sum(model.qptr[p, n, np, tr, sc, tp] for p in model.p for sc in model.sc)
         <= model.TCAU[n, np, tr, tp]
     )
 
@@ -285,8 +468,7 @@ def terminal_procurement_flow_rule(model, m, te, r, tp):
     return model.qmp[m, te, r, tp] == sum(model.qmtr[m, origin, destination, tr, tp] for tr in model.tr)
 
 
-model.TerminalToRefineryFlow = Constraint(model.m, model.te, model.r, model.tp,
-                                          rule=terminal_procurement_flow_rule)
+model.TerminalToRefineryFlow = Constraint(model.m, model.te, model.r, model.tp, rule=terminal_procurement_flow_rule)
 
 
 def oilfield_procurement_flow_rule(model, m, of_, r, tp):
@@ -295,8 +477,7 @@ def oilfield_procurement_flow_rule(model, m, of_, r, tp):
     return model.qmp_of[m, of_, r, tp] == sum(model.qmtr[m, origin, destination, tr, tp] for tr in model.tr)
 
 
-model.OilfieldToRefineryFlow = Constraint(model.m, model.of, model.r, model.tp,
-                                          rule=oilfield_procurement_flow_rule)
+model.OilfieldToRefineryFlow = Constraint(model.m, model.of, model.r, model.tp, rule=oilfield_procurement_flow_rule)
 
 
 def refinery_to_base_flow_rule(model, p, r, b, sc, tp):
@@ -305,8 +486,7 @@ def refinery_to_base_flow_rule(model, p, r, b, sc, tp):
     return model.qpb[p, r, b, sc, tp] == sum(model.qptr[p, origin, destination, tr, sc, tp] for tr in model.tr)
 
 
-model.RefineryToBaseFlow = Constraint(model.p, model.r, model.b, model.sc, model.tp,
-                                      rule=refinery_to_base_flow_rule)
+model.RefineryToBaseFlow = Constraint(model.p, model.r, model.b, model.sc, model.tp, rule=refinery_to_base_flow_rule)
 
 
 def refinery_to_terminal_flow_rule(model, p, r, te, sc, tp):
@@ -315,8 +495,7 @@ def refinery_to_terminal_flow_rule(model, p, r, te, sc, tp):
     return model.qpte[p, r, te, sc, tp] == sum(model.qptr[p, origin, destination, tr, sc, tp] for tr in model.tr)
 
 
-model.RefineryToTerminalFlow = Constraint(model.p, model.r, model.te, model.sc, model.tp,
-                                          rule=refinery_to_terminal_flow_rule)
+model.RefineryToTerminalFlow = Constraint(model.p, model.r, model.te, model.sc, model.tp, rule=refinery_to_terminal_flow_rule)
 
 
 def base_to_customer_flow_rule(model, p, b, c, sc, tp):
@@ -325,8 +504,7 @@ def base_to_customer_flow_rule(model, p, b, c, sc, tp):
     return model.qps[p, c, b, sc, tp] == sum(model.qptr[p, origin, destination, tr, sc, tp] for tr in model.tr)
 
 
-model.BaseToCustomerFlow = Constraint(model.p, model.b, model.c, model.sc, model.tp,
-                                      rule=base_to_customer_flow_rule)
+model.BaseToCustomerFlow = Constraint(model.p, model.b, model.c, model.sc, model.tp, rule=base_to_customer_flow_rule)
 
 
 def terminal_to_overseas_flow_rule(model, p, te, oc, sc, tp):
@@ -335,8 +513,7 @@ def terminal_to_overseas_flow_rule(model, p, te, oc, sc, tp):
     return model.qps_oc[p, oc, te, sc, tp] == sum(model.qptr[p, origin, destination, tr, sc, tp] for tr in model.tr)
 
 
-model.TerminalToOverseasFlow = Constraint(model.p, model.te, model.oc, model.sc, model.tp,
-                                          rule=terminal_to_overseas_flow_rule)
+model.TerminalToOverseasFlow = Constraint(model.p, model.te, model.oc, model.sc, model.tp, rule=terminal_to_overseas_flow_rule)
 
 
 def terminal_to_base_extra_flow_rule(model, p, te, b, sc, tp):
@@ -345,27 +522,27 @@ def terminal_to_base_extra_flow_rule(model, p, te, b, sc, tp):
     return model.qepb[p, b, te, sc, tp] == sum(model.qptr[p, origin, destination, tr, sc, tp] for tr in model.tr)
 
 
-model.TerminalToBaseExtraFlow = Constraint(model.p, model.te, model.b, model.sc, model.tp,
-                                           rule=terminal_to_base_extra_flow_rule)
+model.TerminalToBaseExtraFlow = Constraint(model.p, model.te, model.b, model.sc, model.tp, rule=terminal_to_base_extra_flow_rule)
 
 
 def product_balance_refinery_rule(model, m, p, r, tp, sc):
     production = model.qmo[r, m, sc, tp] * model.YDR[r, m, p]
-    shipments = sum(model.qpte[p, r, te, sc, tp] for te in model.te) + \
-        sum(model.qpb[p, r, b, sc, tp] for b in model.b)
+    shipments = sum(model.qpte[p, r, te, sc, tp] for te in model.te) + sum(model.qpb[p, r, b, sc, tp] for b in model.b)
     return production == shipments
 
 
-model.RefineryProductBalance = Constraint(model.m, model.p, model.r, model.tp, model.sc,
-                                          rule=product_balance_refinery_rule)
+model.RefineryProductBalance = Constraint(model.m, model.p, model.r, model.tp, model.sc, rule=product_balance_refinery_rule)
 
 
 def product_balance_terminal_rule(model, p, te, tp, sc):
-    prev_tp = model.tp.prev(tp)
-    inventory_prev = model.qpsto[p, te, sc, prev_tp] if prev_tp is not None else 0
-    inflow = sum(model.qpte[p, r, te, sc, tp] for r in model.r) + model.qepp[p, te, sc, tp] + inventory_prev
-    outflow = sum(model.qps_oc[p, oc, te, sc, tp] for oc in model.oc) + \
-        sum(model.qepb[p, b, te, sc, tp] for b in model.b) + model.qpsto[p, te, sc, tp]
+    inflow = sum(model.qpte[p, r, te, sc, tp] for r in model.r) + model.qepp[p, te, sc, tp]
+    if model.tp.ord(tp) > 1:
+        inflow += model.qpsto[p, te, sc, model.tp.prev(tp)]
+    outflow = (
+        sum(model.qps_oc[p, oc, te, sc, tp] for oc in model.oc)
+        + sum(model.qepb[p, b, te, sc, tp] for b in model.b)
+        + model.qpsto[p, te, sc, tp]
+    )
     return inflow == outflow
 
 
@@ -373,10 +550,9 @@ model.TerminalBalance = Constraint(model.p, model.te, model.tp, model.sc, rule=p
 
 
 def product_balance_base_rule(model, p, b, tp, sc):
-    prev_tp = model.tp.prev(tp)
-    inventory_prev = model.qpsto_b[p, b, sc, prev_tp] if prev_tp is not None else 0
-    inflow = sum(model.qpb[p, r, b, sc, tp] for r in model.r) + \
-        sum(model.qepb[p, b, te, sc, tp] for te in model.te) + inventory_prev
+    inflow = sum(model.qpb[p, r, b, sc, tp] for r in model.r) + sum(model.qepb[p, b, te, sc, tp] for te in model.te)
+    if model.tp.ord(tp) > 1:
+        inflow += model.qpsto_b[p, b, sc, model.tp.prev(tp)]
     outflow = sum(model.qps[p, c, b, sc, tp] for c in model.c) + model.qpsto_b[p, b, sc, tp]
     return inflow == outflow
 
@@ -389,8 +565,7 @@ def sulfur_content_rule(model, p, r, tp, sc):
         model.qmo[r, m, sc, tp] * model.SC_m[m, tp] * (1 - model.DSR[r, m]) * model.YDR[r, m, p]
         for m in model.m
     )
-    total_output = sum(model.qpte[p, r, te, sc, tp] for te in model.te) + \
-        sum(model.qpb[p, r, b, sc, tp] for b in model.b)
+    total_output = sum(model.qpte[p, r, te, sc, tp] for te in model.te) + sum(model.qpb[p, r, b, sc, tp] for b in model.b)
     if total_output == 0:
         return processed_sulfur <= 0
     return processed_sulfur <= model.SC_p[p, tp] * total_output
@@ -400,8 +575,11 @@ model.SulfurConstraint = Constraint(model.p, model.r, model.tp, model.sc, rule=s
 
 
 def procurement_capacity_material_rule(model, m, tp):
-    return sum(model.qmp[m, te, r, tp] for te in model.te for r in model.r) + \
-        sum(model.qmp_of[m, of_, r, tp] for of_ in model.of for r in model.r) <= model.MPU[m, tp]
+    return (
+        sum(model.qmp[m, te, r, tp] for te in model.te for r in model.r)
+        + sum(model.qmp_of[m, of_, r, tp] for of_ in model.of for r in model.r)
+        <= model.MPU[m, tp]
+    )
 
 
 model.MaterialProcurementLimit = Constraint(model.m, model.tp, rule=procurement_capacity_material_rule)
@@ -422,100 +600,71 @@ def refinery_operation_bounds_upper_rule(model, r, m, tp, sc):
     return model.qmo[r, m, sc, tp] <= model.CAPU[r, m, tp]
 
 
-model.RefineryLowerBound = Constraint(model.r, model.m, model.tp, model.sc,
-                                      rule=refinery_operation_bounds_lower_rule)
-model.RefineryUpperBound = Constraint(model.r, model.m, model.tp, model.sc,
-                                      rule=refinery_operation_bounds_upper_rule)
+model.RefineryLowerBound = Constraint(model.r, model.m, model.tp, model.sc, rule=refinery_operation_bounds_lower_rule)
+model.RefineryUpperBound = Constraint(model.r, model.m, model.tp, model.sc, rule=refinery_operation_bounds_upper_rule)
 
 
 def inventory_capacity_material_rule(model, m, r, sc, tp):
     return model.qmsto[m, r, sc, tp] <= model.IVU[m, r, tp]
 
 
-model.MaterialInventoryCapacity = Constraint(model.m, model.r, model.sc, model.tp,
-                                             rule=inventory_capacity_material_rule)
-
-
 def inventory_capacity_terminal_rule(model, p, te, sc, tp):
     return model.qpsto[p, te, sc, tp] <= model.IVU_te[p, te, tp]
-
-
-model.TerminalInventoryCapacity = Constraint(model.p, model.te, model.sc, model.tp,
-                                             rule=inventory_capacity_terminal_rule)
 
 
 def inventory_capacity_base_rule(model, p, b, sc, tp):
     return model.qpsto_b[p, b, sc, tp] <= model.IVU_b[p, b, tp]
 
 
-model.BaseInventoryCapacity = Constraint(model.p, model.b, model.sc, model.tp,
-                                         rule=inventory_capacity_base_rule)
+model.MaterialInventoryCapacity = Constraint(model.m, model.r, model.sc, model.tp, rule=inventory_capacity_material_rule)
+model.TerminalInventoryCapacity = Constraint(model.p, model.te, model.sc, model.tp, rule=inventory_capacity_terminal_rule)
+model.BaseInventoryCapacity = Constraint(model.p, model.b, model.sc, model.tp, rule=inventory_capacity_base_rule)
 
 
 def demand_external_rule(model, p, oc, te, sc, tp):
-    return model.qps_oc[p, oc, te, sc, tp] == model.DEM_oc[p, oc, sc, tp] + \
-        model.qsp_oc[p, oc, sc, tp] - model.qbp_oc[p, oc, sc, tp]
+    return model.qps_oc[p, oc, te, sc, tp] == model.DEM_oc[p, oc, sc, tp] + model.qsp_oc[p, oc, sc, tp] - model.qbp_oc[p, oc, sc, tp]
 
 
-model.ExternalDemand = Constraint(model.p, model.oc, model.te, model.sc, model.tp,
-                                  rule=demand_external_rule)
+model.ExternalDemand = Constraint(model.p, model.oc, model.te, model.sc, model.tp, rule=demand_external_rule)
 
 
 def demand_internal_rule(model, p, c, b, sc, tp):
-    return model.qps[p, c, b, sc, tp] == model.DEM[p, c, sc, tp] + \
-        model.qsp[p, c, sc, tp] - model.qbp[p, c, sc, tp]
+    return model.qps[p, c, b, sc, tp] == model.DEM[p, c, sc, tp] + model.qsp[p, c, sc, tp] - model.qbp[p, c, sc, tp]
 
 
-model.InternalDemand = Constraint(model.p, model.c, model.b, model.sc, model.tp,
-                                  rule=demand_internal_rule)
+model.InternalDemand = Constraint(model.p, model.c, model.b, model.sc, model.tp, rule=demand_internal_rule)
 
 
 def backlog_limit_external_rule(model, p, oc, sc, tp):
     return model.qbp_oc[p, oc, sc, tp] <= model.iqbp_oc[p, oc, sc, tp] * model.QBU_oc[p, oc, tp]
 
 
-model.BacklogLimitOverseas = Constraint(model.p, model.oc, model.sc, model.tp,
-                                        rule=backlog_limit_external_rule)
-
-
 def backlog_limit_internal_rule(model, p, c, sc, tp):
     return model.qbp[p, c, sc, tp] <= model.iqbp[p, c, sc, tp] * model.QBU[p, c, tp]
-
-
-model.BacklogLimitDomestic = Constraint(model.p, model.c, model.sc, model.tp,
-                                        rule=backlog_limit_internal_rule)
 
 
 def surplus_limit_external_rule(model, p, oc, sc, tp):
     return model.qsp_oc[p, oc, sc, tp] <= model.iqsp_oc[p, oc, sc, tp] * model.QSU_oc[p, oc, tp]
 
 
-model.SurplusLimitOverseas = Constraint(model.p, model.oc, model.sc, model.tp,
-                                        rule=surplus_limit_external_rule)
-
-
 def surplus_limit_internal_rule(model, p, c, sc, tp):
     return model.qsp[p, c, sc, tp] <= model.iqsp[p, c, sc, tp] * model.QSU[p, c, tp]
-
-
-model.SurplusLimitDomestic = Constraint(model.p, model.c, model.sc, model.tp,
-                                        rule=surplus_limit_internal_rule)
 
 
 def logical_relation_external_rule(model, p, oc, sc, tp):
     return model.iqsp_oc[p, oc, sc, tp] + model.iqbp_oc[p, oc, sc, tp] <= 1
 
 
-model.LogicalRelationOverseas = Constraint(model.p, model.oc, model.sc, model.tp,
-                                           rule=logical_relation_external_rule)
-
-
 def logical_relation_internal_rule(model, p, c, sc, tp):
     return model.iqsp[p, c, sc, tp] + model.iqbp[p, c, sc, tp] <= 1
 
 
-model.LogicalRelationDomestic = Constraint(model.p, model.c, model.sc, model.tp,
-                                           rule=logical_relation_internal_rule)
+model.BacklogLimitOverseas = Constraint(model.p, model.oc, model.sc, model.tp, rule=backlog_limit_external_rule)
+model.BacklogLimitDomestic = Constraint(model.p, model.c, model.sc, model.tp, rule=backlog_limit_internal_rule)
+model.SurplusLimitOverseas = Constraint(model.p, model.oc, model.sc, model.tp, rule=surplus_limit_external_rule)
+model.SurplusLimitDomestic = Constraint(model.p, model.c, model.sc, model.tp, rule=surplus_limit_internal_rule)
+model.LogicalRelationOverseas = Constraint(model.p, model.oc, model.sc, model.tp, rule=logical_relation_external_rule)
+model.LogicalRelationDomestic = Constraint(model.p, model.c, model.sc, model.tp, rule=logical_relation_internal_rule)
 
 # -----------------------------------------------------------------------------
 # Solve the model
@@ -530,7 +679,6 @@ elif result.solver.termination_condition == TerminationCondition.infeasible:
 else:
     print(f'Model status: {result.solver.termination_condition}')
 
-# Display non-zero variable values for inspection
 for var in model.component_objects(Var, active=True):
     has_value = False
     for index in var:
