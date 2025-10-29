@@ -15,11 +15,24 @@ from pyomo.environ import (
     value,
 )
 from pyomo.opt import TerminationCondition
-from pyomo.util.infeasible import (
-    log_infeasible_binary,
-    log_infeasible_bounds,
-    log_infeasible_constraints,
-)
+
+try:  # pragma: no cover - import depends on user Pyomo version
+    from pyomo.util import infeasible as _infeasible_utils
+except ImportError:  # pragma: no cover - gracefully degrade when unavailable
+    _infeasible_utils = None
+
+if _infeasible_utils is not None:
+    log_infeasible_bounds = getattr(_infeasible_utils, "log_infeasible_bounds", None)
+    log_infeasible_constraints = getattr(_infeasible_utils, "log_infeasible_constraints", None)
+    log_infeasible_binary = getattr(
+        _infeasible_utils,
+        "log_infeasible_binary",
+        getattr(_infeasible_utils, "log_infeasible_binary_vars", None),
+    )
+else:
+    log_infeasible_bounds = None
+    log_infeasible_constraints = None
+    log_infeasible_binary = None
 
 
 diagnostic_logger = logging.getLogger("infeasibility_report")
@@ -693,20 +706,59 @@ model.iis = Suffix(direction=Suffix.IMPORT)
 def report_infeasibilities(model, logger, tol=1e-6):
     logger.info("=== Infeasibility diagnostics ===")
 
-    try:
-        log_infeasible_bounds(model, tol=tol, log=logger)
-    except Exception as exc:  # pragma: no cover - diagnostic safeguard
-        logger.warning("Unable to evaluate bound feasibility: %s", exc)
+    if log_infeasible_bounds is not None:
+        try:
+            log_infeasible_bounds(model, tol=tol, log=logger)
+        except Exception as exc:  # pragma: no cover - diagnostic safeguard
+            logger.warning("Unable to evaluate bound feasibility: %s", exc)
+    else:
+        logger.info(
+            "Pyomo infeasibility utility 'log_infeasible_bounds' is unavailable; "
+            "skipping automatic bound diagnostics."
+        )
 
-    try:
-        log_infeasible_constraints(model, tol=tol, log=logger)
-    except Exception as exc:  # pragma: no cover - diagnostic safeguard
-        logger.warning("Unable to evaluate constraint feasibility: %s", exc)
+    if log_infeasible_constraints is not None:
+        try:
+            log_infeasible_constraints(model, tol=tol, log=logger)
+        except Exception as exc:  # pragma: no cover - diagnostic safeguard
+            logger.warning("Unable to evaluate constraint feasibility: %s", exc)
+    else:
+        logger.info(
+            "Pyomo infeasibility utility 'log_infeasible_constraints' is unavailable; "
+            "skipping automatic constraint diagnostics."
+        )
 
-    try:
-        log_infeasible_binary(model, log=logger)
-    except Exception as exc:  # pragma: no cover - diagnostic safeguard
-        logger.warning("Unable to evaluate binary feasibility: %s", exc)
+    if log_infeasible_binary is not None:
+        try:
+            log_infeasible_binary(model, log=logger)
+        except Exception as exc:  # pragma: no cover - diagnostic safeguard
+            logger.warning("Unable to evaluate binary feasibility: %s", exc)
+    else:
+        logger.info(
+            "Pyomo infeasibility utility for binary variables is unavailable; "
+            "performing manual check."
+        )
+        violations_found = False
+        observed_binaries = False
+        for var_data in model.component_data_objects(Var, active=True):
+            is_binary = getattr(var_data, "is_binary", lambda: False)()
+            if not is_binary:
+                continue
+            observed_binaries = True
+            var_val = var_data.value
+            if var_val is None:
+                continue
+            if var_val < -tol or var_val > 1 + tol:
+                violations_found = True
+                logger.error(
+                    "Binary variable %s has infeasible value %.6f (outside [0, 1])",
+                    var_data.name,
+                    var_val,
+                )
+        if not observed_binaries:
+            logger.info("No active binary variables found to inspect.")
+        elif not violations_found:
+            logger.info("No binary infeasibilities detected via manual check.")
 
     for var_data in model.component_data_objects(Var, active=True):
         lb = var_data.lb
